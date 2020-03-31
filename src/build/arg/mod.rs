@@ -12,7 +12,6 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Display, Formatter};
 #[cfg(not(any(target_os = "windows", target_arch = "wasm32")))]
 use std::os::unix::ffi::OsStrExt;
-use std::rc::Rc;
 use std::str;
 
 // Third Party
@@ -25,8 +24,20 @@ use crate::util::Key;
 use crate::util::OsStrExt3;
 use crate::INTERNAL_ERROR_MSG;
 
-type Validator = Rc<dyn Fn(String) -> Result<(), String>>;
-type ValidatorOs = Rc<dyn Fn(&OsStr) -> Result<(), String>>;
+#[cfg(not(feature = "app-send"))]
+type RefCounted<A> = std::rc::Rc<A>;
+#[cfg(feature = "app-send")]
+type RefCounted<A> = std::sync::Arc<A>;
+
+#[cfg(not(feature = "app-send"))]
+type Validator = RefCounted<dyn Fn(String) -> Result<(), String>>;
+#[cfg(not(feature = "app-send"))]
+type ValidatorOs = RefCounted<dyn Fn(&OsStr) -> Result<(), String>>;
+
+#[cfg(feature = "app-send")]
+type Validator = RefCounted<dyn Fn(String) -> Result<(), String> + Send + Sync>;
+#[cfg(feature = "app-send")]
+type ValidatorOs = RefCounted<dyn Fn(&OsStr) -> Result<(), String> + Send + Sync>;
 
 type Id = u64;
 
@@ -1889,12 +1900,19 @@ impl<'help> Arg<'help> {
     /// [`Result`]: https://doc.rust-lang.org/std/result/enum.Result.html
     /// [`Err(String)`]: https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err
     /// [`Rc`]: https://doc.rust-lang.org/std/rc/struct.Rc.html
-    pub fn validator<F, O, E>(mut self, f: F) -> Self
+    pub fn validator<
+        #[cfg(not(feature = "app-send"))] F: Fn(String) -> Result<O, E> + 'static,
+        #[cfg(feature = "app-send")] F: Fn(String) -> Result<O, E> + Send + Sync + 'static,
+        O,
+        E,
+    >(
+        mut self,
+        f: F,
+    ) -> Self
     where
-        F: Fn(String) -> Result<O, E> + 'static,
         E: ToString,
     {
-        self.validator = Some(Rc::new(move |s| {
+        self.validator = Some(RefCounted::new(move |s| {
             f(s).map(|_| ()).map_err(|e| e.to_string())
         }));
         self
@@ -1930,11 +1948,15 @@ impl<'help> Arg<'help> {
     /// [`Result`]: https://doc.rust-lang.org/std/result/enum.Result.html
     /// [`Err(String)`]: https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err
     /// [`Rc`]: https://doc.rust-lang.org/std/rc/struct.Rc.html
-    pub fn validator_os<F, O>(mut self, f: F) -> Self
-    where
-        F: Fn(&OsStr) -> Result<O, String> + 'static,
-    {
-        self.validator_os = Some(Rc::new(move |s| f(s).map(|_| ())));
+    pub fn validator_os<
+        #[cfg(not(feature = "app-send"))] F: Fn(&OsStr) -> Result<O, String> + 'static,
+        #[cfg(feature = "app-send")] F: Fn(&OsStr) -> Result<O, String> + Send + Sync + 'static,
+        O,
+    >(
+        mut self,
+        f: F,
+    ) -> Self {
+        self.validator_os = Some(RefCounted::new(move |s| f(s).map(|_| ())));
         self
     }
 

@@ -44,3 +44,13 @@ fn global_settings() {
         .unwrap()
         .is_set(AppSettings::TrailingVarArg));
 }
+
+#[test]
+fn app_send() {
+    use crate::build::app::App;
+    use static_assertions::*;
+    #[cfg(not(feature = "app-send"))]
+    assert_not_impl_any!(App<'_>: Send);
+    #[cfg(feature = "app-send")]
+    assert_impl_all!(App<'_>: Send);
+}
